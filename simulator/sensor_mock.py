@@ -3,7 +3,7 @@ import time
 import random
 
 # La dirección de tu API local
-API_URL = "http://localhost:5000/api/sensor-data"
+API_URL = "http://iot-backend-alb-912185843.us-east-1.elb.amazonaws.com/api/sensor-data"
 
 # Nombres de sensores simulados
 SENSORES = ["Sensor_Temp_Cocina", "Sensor_Temp_Sala", "Humedad_Invernadero", "Presion_Valvula_1"]
