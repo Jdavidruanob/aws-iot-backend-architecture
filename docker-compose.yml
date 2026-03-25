@@ -1,0 +1,51 @@
+services:
+  # --- EL INTERMEDIARIO DE MENSAJES ---
+  rabbitmq:
+    image: rabbitmq:3-management
+    container_name: iot_rabbitmq
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    environment:
+      RABBITMQ_DEFAULT_USER: guest
+      RABBITMQ_DEFAULT_PASS: guest
+    healthcheck:
+      test: [ "CMD", "rabbitmq-diagnostics", "-q", "ping" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # --- LA BASE DE DATOS ---
+  postgres:
+    image: postgres:15
+    container_name: iot_postgres
+    ports:
+      - "5433:5432"
+    environment:
+      POSTGRES_DB: iot_project
+      POSTGRES_USER: admin
+      POSTGRES_PASSWORD: adminpassword
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  # --- NUESTRA API REST ---
+  api:
+    build: ./api                 # Le dice a Docker que busque el Dockerfile en la carpeta /api
+    container_name: iot_api
+    ports:
+      - "5000:5000"              # Exponemos el puerto 5000 para poder enviarle peticiones
+    depends_on:
+      rabbitmq:
+        condition: service_healthy # Espera a que RabbitMQ esté 100% listo antes de encender la API
+
+  # --- NUESTRO NUEVO WORKER ---
+  worker:
+    build: ./worker
+    container_name: iot_worker
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      postgres:
+        condition: service_started
+volumes:
+  postgres_data:
