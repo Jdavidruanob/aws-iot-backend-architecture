@@ -24,7 +24,7 @@ usermod -aG docker ubuntu
 # Clonar el repositorio
 cd /home/ubuntu
 # Nota: Se recomienda cambiar esta URL por la URL real del repositorio
-git clone https://github.com/TU_USUARIO/aws-iot-backend-architecture.git
+git clone https://github.com/Jdavidruanob/aws-iot-backend-architecture.git
 cd aws-iot-backend-architecture
 
 # Levantar la infraestructura
