@@ -1,23 +1,25 @@
 import requests
 import time
 import random
+import os
 
-# La dirección de tu API local
-# Reemplaza la URL vieja por la nueva del balanceador
-API_URL = "http://iot-backend-alb-1673131472.us-east-1.elb.amazonaws.com/api/sensor-data"
+# URL de la API configurada via variable de entorno
+# En local (Docker Compose): http://localhost:5000
+# En AWS (EC2): se inyecta via install_producer.sh desde SSM
+API_URL = os.environ.get('API_URL', 'http://localhost:5000/api/sensor-data')
 
-# Nombres de sensores simulados
+# Sensores simulados en el enjambre IoT
 SENSORES = ["Sensor_Temp_Cocina", "Sensor_Temp_Sala", "Humedad_Invernadero", "Presion_Valvula_1"]
 
-print("🚀 Iniciando enjambre de sensores IoT...")
-print("Presiona CTRL+C en la terminal para detener la simulación.\n")
+print("Iniciando enjambre de sensores IoT...")
+print(f"Conectando a: {API_URL}")
+print("Presiona CTRL+C para detener.\n")
 
 try:
     while True:
-        # 1. Generamos datos aleatorios para darle realismo
+        # Selección aleatoria de sensor y valor para simular datos realistas
         sensor_elegido = random.choice(SENSORES)
-        # Genera un valor aleatorio entre 10.0 y 40.0 con dos decimales
-        valor_generado = round(random.uniform(10.0, 40.0), 2) 
+        valor_generado = round(random.uniform(10.0, 40.0), 2)
 
         payload = {
             "sensor_id": sensor_elegido,
@@ -25,22 +27,22 @@ try:
         }
 
         try:
-            # 2. Hacemos la petición POST a tu API (Igual que el comando de PowerShell)
-            respuesta = requests.post(API_URL, json=payload)
+            respuesta = requests.post(API_URL, json=payload, timeout=10)
 
-            # 3. Verificamos si la API lo aceptó (Código 202 que programaste)
             if respuesta.status_code == 202:
                 datos_respuesta = respuesta.json()
-                print(f"[+] Enviado: {sensor_elegido} -> {valor_generado} | TaskId: {datos_respuesta['TaskId'].split('-')[0]}...")
+                # Mostramos solo los primeros caracteres del TaskId para legibilidad
+                print(f"[+] {sensor_elegido} -> {valor_generado} | TaskId: {datos_respuesta['TaskId'].split('-')[0]}...")
             else:
-                print(f"[-] La API rechazó el dato. Código: {respuesta.status_code}")
-                
-        except requests.exceptions.ConnectionError:
-            print("[-] Error de conexión: ¿Está encendido el contenedor de la API?")
+                print(f"[-] La API rechazo el dato. Codigo: {respuesta.status_code}")
 
-        # 4. Pausa aleatoria entre 0.5 y 2 segundos antes de que otro sensor envíe un dato
+        except requests.exceptions.ConnectionError:
+            print("[-] Error de conexion. Verifica que la API este corriendo.")
+
+        # Intervalo aleatorio para simular patrones de sensores reales
+        # (algunos sensores envían más frecuentemente que otros)
         tiempo_espera = random.uniform(0.5, 2.0)
         time.sleep(tiempo_espera)
 
 except KeyboardInterrupt:
-    print("\n🛑 Simulador detenido por el usuario.")
+    print("\nSimulador detenido.")

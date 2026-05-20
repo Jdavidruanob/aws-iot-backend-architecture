@@ -3,32 +3,64 @@ import psycopg2
 import json
 import time
 import os
+import logging
 
-# Credenciales de la Base de Datos (las mismas del docker-compose)
-DB_HOST = "postgres" # Nombre del servicio en docker-compose
-DB_PORT = "5432"     # Puerto interno de Postgres
+logging.basicConfig(level=logging.INFO)
+LOGGER = logging.getLogger(__name__)
+
+
+def get_rabbitmq_ip():
+    rabbitmq_host = os.environ.get('RABBITMQ_HOST')
+    if rabbitmq_host:
+        return rabbitmq_host
+    if os.environ.get('USE_LOCAL_ENV', 'false').lower() == 'true':
+        return 'rabbitmq'
+    raise RuntimeError("RABBITMQ_HOST is required outside local mode")
+
+
+def get_postgres_ip():
+    postgres_host = os.environ.get('POSTGRES_HOST')
+    if postgres_host:
+        return postgres_host
+    if os.environ.get('USE_LOCAL_ENV', 'false').lower() == 'true':
+        return 'postgres'
+    raise RuntimeError("POSTGRES_HOST is required outside local mode")
+
+
+RABBITMQ_IP = None
+POSTGRES_IP = None
+
+# Credenciales de la base de datos
+DB_PORT = "5432"
 DB_NAME = "iot_project"
 DB_USER = "admin"
 DB_PASS = "adminpassword"
 
+
 def get_db_connection():
-    # Intentamos conectar a la BD con reintentos (por si la BD tarda en encender)
+    # PostgreSQL puede tardar en iniciar, reintentamos cada 2 segundos
+    global POSTGRES_IP
+
     while True:
         try:
+            if POSTGRES_IP is None:
+                POSTGRES_IP = get_postgres_ip()
             conn = psycopg2.connect(
-                host=DB_HOST,
+                host=POSTGRES_IP,
                 port=DB_PORT,
                 dbname=DB_NAME,
                 user=DB_USER,
                 password=DB_PASS
             )
             return conn
-        except psycopg2.OperationalError:
-            print("Esperando a que PostgreSQL inicie...")
+        except Exception:
+            POSTGRES_IP = None
+            LOGGER.info("Esperando a que PostgreSQL inicie...")
             time.sleep(2)
 
+
 def init_db():
-    # Crea la tabla si no existe
+    # Crea la tabla si no existe (idempotente)
     conn = get_db_connection()
     cur = conn.cursor()
     cur.execute('''
@@ -44,22 +76,23 @@ def init_db():
     conn.commit()
     cur.close()
     conn.close()
-    print("Base de datos inicializada correctamente.")
+    LOGGER.info("Base de datos inicializada correctamente.")
+
 
 def callback(ch, method, properties, body):
-    # Esta función se ejecuta CADA VEZ que llega un mensaje nuevo a RabbitMQ
+    # Procesa cada mensaje de la cola
+    # Si falla el INSERT, el mensaje queda en la cola para reintento
     mensaje = json.loads(body.decode())
-    print(f" [x] Mensaje recibido: {mensaje['task_id']}")
-    
+    LOGGER.info("Mensaje recibido: %s", mensaje['task_id'])
+
     task_id = mensaje['task_id']
     sensor_id = mensaje['data']['sensor_id']
     valor = mensaje['data']['valor']
-    status = "completed" # Cambiamos el estado a completado
-    
+    status = "completed"
+
     try:
         conn = get_db_connection()
         cur = conn.cursor()
-        # Insertamos los datos en PostgreSQL
         cur.execute(
             "INSERT INTO sensor_data (task_id, sensor_id, valor, status) VALUES (%s, %s, %s, %s)",
             (task_id, sensor_id, valor, status)
@@ -67,40 +100,38 @@ def callback(ch, method, properties, body):
         conn.commit()
         cur.close()
         conn.close()
-        
-        print(f" [v] Guardado en BD con éxito. Task: {task_id}")
-        
-        # Le confirmamos a RabbitMQ que ya puede borrar el mensaje de la cola
+
+        LOGGER.info("Guardado en BD con exito. Task: %s", task_id)
         ch.basic_ack(delivery_tag=method.delivery_tag)
-        
+
     except Exception as e:
-        print(f" [!] Error al guardar en BD: {e}")
-        # Si falla, no enviamos el ack, así RabbitMQ intentará enviarlo de nuevo después
+        LOGGER.exception("Error al guardar en BD: %s", e)
+
 
 def main():
+    # Obtiene IPs desde SSM, inicializa DB y comienza a consumir mensajes
+    global RABBITMQ_IP
     init_db()
-    
-    # Conectamos a RabbitMQ
-    credentials = pika.PlainCredentials('guest', 'guest')
-    parameters = pika.ConnectionParameters('rabbitmq', credentials=credentials)
-    
-    # Reintentos para conectar a RabbitMQ
+
     while True:
         try:
+            RABBITMQ_IP = get_rabbitmq_ip()
+            LOGGER.info("Conectando a RabbitMQ en: %s", RABBITMQ_IP)
+            credentials = pika.PlainCredentials('guest', 'guest')
+            parameters = pika.ConnectionParameters(RABBITMQ_IP, credentials=credentials)
             connection = pika.BlockingConnection(parameters)
             break
-        except pika.exceptions.AMQPConnectionError:
-            print("Esperando a que RabbitMQ inicie...")
+        except Exception:
+            LOGGER.info("Esperando a que RabbitMQ inicie...")
             time.sleep(2)
-            
+
     channel = connection.channel()
     channel.queue_declare(queue='iot_tasks_queue', durable=True)
-    
-    # auto_ack=False asegura que si el worker falla a la mitad, no se pierda el dato
     channel.basic_consume(queue='iot_tasks_queue', on_message_callback=callback, auto_ack=False)
-    
-    print(' [*] Worker iniciado. Esperando mensajes. Para salir presione CTRL+C')
+
+    LOGGER.info("Worker iniciado. Esperando mensajes.")
     channel.start_consuming()
+
 
 if __name__ == '__main__':
     main()

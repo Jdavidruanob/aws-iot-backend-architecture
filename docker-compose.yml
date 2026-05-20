@@ -1,5 +1,10 @@
 services:
-  # --- EL INTERMEDIARIO DE MENSAJES ---
+  # ============================================
+  # RabbitMQ - Message Broker
+  # Recibe mensajes de la API y los encola para el Worker
+  # Puerto 5672: AMQP (comunicación interna)
+  # Puerto 15672: UI de administración (rabbitmq_management)
+  # ============================================
   rabbitmq:
     image: rabbitmq:3-management
     container_name: iot_rabbitmq
@@ -15,7 +20,11 @@ services:
       timeout: 5s
       retries: 5
 
-  # --- LA BASE DE DATOS ---
+  # ============================================
+  # PostgreSQL - Base de datos
+  # Almacena los datos de sensores procesados por el Worker
+  # Puerto 5432 interno, expuesto como 5433 para evitar conflictos
+  # ============================================
   postgres:
     image: postgres:15
     container_name: iot_postgres
@@ -28,24 +37,43 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
 
-  # --- NUESTRA API REST ---
+  # ============================================
+  # API Flask - Recebe datos de sensores
+  # Endpoints:
+  #   POST /api/sensor-data -> encola a RabbitMQ, retorna 202
+  #   GET /health -> para HAProxy health checks
+  # Puerto 5000
+  # ============================================
   api:
-    build: ./api                 # Le dice a Docker que busque el Dockerfile en la carpeta /api
+    build: ./api
     container_name: iot_api
     ports:
-      - "5000:5000"              # Exponemos el puerto 5000 para poder enviarle peticiones
+      - "5000:5000"
+    environment:
+      - USE_LOCAL_ENV=true
+      - RABBITMQ_HOST=rabbitmq
     depends_on:
       rabbitmq:
-        condition: service_healthy # Espera a que RabbitMQ esté 100% listo antes de encender la API
+        condition: service_healthy
 
-  # --- NUESTRO NUEVO WORKER ---
+  # ============================================
+  # Worker - Procesa mensajes de RabbitMQ
+  # Consume de la cola y escribe en PostgreSQL
+  # No expone puertos, solo se conecta a RabbitMQ y Postgres
+  # ============================================
   worker:
     build: ./worker
     container_name: iot_worker
+    environment:
+      - USE_LOCAL_ENV=true
+      - RABBITMQ_HOST=rabbitmq
+      - POSTGRES_HOST=postgres
     depends_on:
       rabbitmq:
         condition: service_healthy
       postgres:
         condition: service_started
+
 volumes:
+  # Volumen persistente para PostgreSQL
   postgres_data:
