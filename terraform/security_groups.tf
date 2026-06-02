@@ -16,6 +16,9 @@ resource "aws_security_group" "haproxy_sg" {
     cidr_blocks = ["0.0.0.0/0"]
   }
 
+  # SSH - Abrir a 0.0.0.0/0 SOLO en desarrollo/Learner Lab
+  # En producción: usar SSM Session Manager (sin abrir puertos) o
+  # restringir a tu IP específica: cidr_blocks = ["tu_ip_publica/32"]
   ingress {
     from_port   = 22
     to_port     = 22
@@ -44,6 +47,9 @@ resource "aws_security_group" "api_sg" {
     security_groups = [aws_security_group.haproxy_sg.id]
   }
 
+  # SSH - Abrir a 0.0.0.0/0 SOLO en desarrollo/Learner Lab
+  # En producción: usar SSM Session Manager (sin abrir puertos) o
+  # restringir a tu IP específica: cidr_blocks = ["tu_ip_publica/32"]
   ingress {
     from_port   = 22
     to_port     = 22
@@ -72,6 +78,8 @@ resource "aws_security_group" "rabbitmq_sg" {
     security_groups = [aws_security_group.api_sg.id, aws_security_group.worker_sg.id]
   }
 
+  # Puerto 15672 (Management UI) - En producción restringir a tu IP:
+  # cidr_blocks = ["tu_ip_publica/32"]
   ingress {
     from_port   = 15672
     to_port     = 15672
@@ -79,6 +87,9 @@ resource "aws_security_group" "rabbitmq_sg" {
     cidr_blocks = ["0.0.0.0/0"]
   }
 
+  # SSH - Abrir a 0.0.0.0/0 SOLO en desarrollo/Learner Lab
+  # En producción: usar SSM Session Manager (sin abrir puertos) o
+  # restringir a tu IP específica: cidr_blocks = ["tu_ip_publica/32"]
   ingress {
     from_port   = 22
     to_port     = 22
@@ -100,6 +111,9 @@ resource "aws_security_group" "worker_sg" {
   name   = "iot-worker-sg"
   vpc_id = var.vpc_id
 
+  # SSH - Abrir a 0.0.0.0/0 SOLO en desarrollo/Learner Lab
+  # En producción: usar SSM Session Manager (sin abrir puertos) o
+  # restringir a tu IP específica: cidr_blocks = ["tu_ip_publica/32"]
   ingress {
     from_port   = 22
     to_port     = 22
@@ -128,6 +142,9 @@ resource "aws_security_group" "postgres_sg" {
     security_groups = [aws_security_group.worker_sg.id]
   }
 
+  # SSH - Abrir a 0.0.0.0/0 SOLO en desarrollo/Learner Lab
+  # En producción: usar SSM Session Manager (sin abrir puertos) o
+  # restringir a tu IP específica: cidr_blocks = ["tu_ip_publica/32"]
   ingress {
     from_port   = 22
     to_port     = 22
@@ -148,6 +165,9 @@ resource "aws_security_group" "producer_sg" {
   name   = "iot-producer-sg"
   vpc_id = var.vpc_id
 
+  # SSH - Abrir a 0.0.0.0/0 SOLO en desarrollo/Learner Lab
+  # En producción: usar SSM Session Manager (sin abrir puertos) o
+  # restringir a tu IP específica: cidr_blocks = ["tu_ip_publica/32"]
   ingress {
     from_port   = 22
     to_port     = 22

@@ -13,11 +13,12 @@ resource "aws_instance" "rabbitmq" {
   vpc_security_group_ids = [aws_security_group.rabbitmq_sg.id]
   user_data               = file("${path.module}/../install_rabbitmq.sh")
 
-  metadata_options {
-    http_endpoint               = "enabled"
-    http_tokens                 = "required"
-    http_put_response_hop_limit = 2
-  }
+  # IMDSv2 - opcional, requiere IAM role para ser util
+  # metadata_options {
+  #   http_endpoint               = "enabled"
+  #   http_tokens                 = "required"
+  #   http_put_response_hop_limit = 2
+  # }
 
   tags = {
     Name = "RabbitMQ-Server"
@@ -38,11 +39,12 @@ resource "aws_instance" "api_server_1" {
     rabbitmq_host = aws_instance.rabbitmq.private_ip
   })
 
-  metadata_options {
-    http_endpoint               = "enabled"
-    http_tokens                 = "required"
-    http_put_response_hop_limit = 2
-  }
+  # IMDSv2 - opcional, requiere IAM role para ser util
+  # metadata_options {
+  #   http_endpoint               = "enabled"
+  #   http_tokens                 = "required"
+  #   http_put_response_hop_limit = 2
+  # }
 
   tags = {
     Name = "API-Server-1"
@@ -63,11 +65,12 @@ resource "aws_instance" "api_server_2" {
     rabbitmq_host = aws_instance.rabbitmq.private_ip
   })
 
-  metadata_options {
-    http_endpoint               = "enabled"
-    http_tokens                 = "required"
-    http_put_response_hop_limit = 2
-  }
+  # IMDSv2 - opcional, requiere IAM role para ser util
+  # metadata_options {
+  #   http_endpoint               = "enabled"
+  #   http_tokens                 = "required"
+  #   http_put_response_hop_limit = 2
+  # }
 
   tags = {
     Name = "API-Server-2"
@@ -90,11 +93,12 @@ resource "aws_instance" "haproxy" {
     api_server_2_ip = aws_instance.api_server_2.private_ip
   })
 
-  metadata_options {
-    http_endpoint               = "enabled"
-    http_tokens                 = "required"
-    http_put_response_hop_limit = 2
-  }
+  # IMDSv2 - opcional, requiere IAM role para ser util
+  # metadata_options {
+  #   http_endpoint               = "enabled"
+  #   http_tokens                 = "required"
+  #   http_put_response_hop_limit = 2
+  # }
 
   tags = {
     Name = "HAProxy-LoadBalancer"
@@ -116,11 +120,12 @@ resource "aws_instance" "worker" {
     worker_image  = var.worker_image
   })
 
-  metadata_options {
-    http_endpoint               = "enabled"
-    http_tokens                 = "required"
-    http_put_response_hop_limit = 2
-  }
+  # IMDSv2 - opcional, requiere IAM role para ser util
+  # metadata_options {
+  #   http_endpoint               = "enabled"
+  #   http_tokens                 = "required"
+  #   http_put_response_hop_limit = 2
+  # }
 
   tags = {
     Name    = "Worker-Server"
@@ -138,11 +143,12 @@ resource "aws_instance" "postgres" {
   vpc_security_group_ids = [aws_security_group.postgres_sg.id]
   user_data               = file("${path.module}/../install_postgres.sh")
 
-  metadata_options {
-    http_endpoint               = "enabled"
-    http_tokens                 = "required"
-    http_put_response_hop_limit = 2
-  }
+  # IMDSv2 - opcional, requiere IAM role para ser util
+  # metadata_options {
+  #   http_endpoint               = "enabled"
+  #   http_tokens                 = "required"
+  #   http_put_response_hop_limit = 2
+  # }
 
   tags = {
     Name    = "Postgres-Server"
@@ -163,11 +169,12 @@ resource "aws_instance" "producer" {
     producer_image  = var.producer_image
   })
 
-  metadata_options {
-    http_endpoint               = "enabled"
-    http_tokens                 = "required"
-    http_put_response_hop_limit = 2
-  }
+  # IMDSv2 - opcional, requiere IAM role para ser util
+  # metadata_options {
+  #   http_endpoint               = "enabled"
+  #   http_tokens                 = "required"
+  #   http_put_response_hop_limit = 2
+  # }
 
   tags = {
     Name    = "Producer-Server"
