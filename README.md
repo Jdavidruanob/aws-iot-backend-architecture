@@ -1,17 +1,19 @@
-# AWS IoT Async Data Pipeline
+# AWS IoT Backend Architecture
 
-Sistema de backend asíncrono para ingestión de datos IoT con arquitectura distribuida en AWS.
+**Actividad académica del curso de IoT (Internet of Things)**
+
+Sistema de backend asíncrono para ingestión de datos IoT con arquitectura distribuida en AWS. Desplegado en 7 instancias EC2 con balanceo de carga, colas de mensajes y base de datos.
 
 ## Tabla de Contenidos
 
 - [Descripción](#descripción)
 - [Arquitectura](#arquitectura)
-- [Modes de Uso](#modos-de-uso)
-- [Desarrollo Local](#desarrollo-local)
+- [Requisitos](#requisitos)
 - [Despliegue en AWS](#despliegue-en-aws)
 - [API Endpoints](#api-endpoints)
 - [Scripts de Instalación](#scripts-de-instalación)
 - [Pruebas](#pruebas)
+- [Base de Datos](#base-de-datos)
 
 ---
 
@@ -19,137 +21,79 @@ Sistema de backend asíncrono para ingestión de datos IoT con arquitectura dist
 
 Este proyecto implementa una pipeline asíncrona para procesar datos de sensores IoT:
 
-1. **Productor** envía datos de sensores
-2. **HAProxy** balancea entre múltiples APIs
-3. **API Flask** recibe datos y los encola en RabbitMQ (respuesta 202 inmediata)
-4. **Worker** consume la cola y almacena en PostgreSQL
-5. Cliente recibe **TaskId** para consulta posterior
+1. **Producer** - Simula sensores IoT enviando datos constantemente
+2. **HAProxy** - Balanceador de carga en puerto 80
+3. **API Servers (x2)** - Reciben datos y los encolan en RabbitMQ (respuesta 202 inmediata)
+4. **RabbitMQ** - Message broker con cola `iot_tasks_queue`
+5. **Worker** - Consume la cola y almacena datos en PostgreSQL
+6. **PostgreSQL** - Almacena los datos de sensores
+
+El cliente recibe un **TaskId (UUID)** para tracking asíncrono.
 
 ---
 
 ## Arquitectura
 
 ```
-                    ┌─────────────────────────────────┐
-                    │         AWS Cloud               │
-                    │                                 │
-   ┌──────────┐     │   ┌─────────────────────────┐   │
-   │ Producer │─────┼──▶│    HAProxy EC2          │   │
-   │  EC2     │     │   │    Puerto 80 (LB)        │   │
-   └──────────┘     │   └───────────┬─────────────┘   │
-                    │               │                  │
-                    │   ┌──────────┴──────────┐       │
-                    │   ▼                     ▼       │
-                    │ ┌──────────┐    ┌──────────┐   │
-                    │ │ API EC2-1│    │ API EC2-2│   │
-                    │ │Puerto 5000    │Puerto 5000│   │
-                    │ └──────┬───┘    └──────┬───┘   │
-                    │        │               │       │
-                    │        └───────┬───────┘       │
-                    │                ▼               │
-                    │   ┌────────────────────┐      │
-                    │   │   RabbitMQ EC2     │      │
-                    │   │   Puerto 5672      │      │
-                    │   └─────────┬──────────┘      │
-                    │             │                  │
-                    │   ┌─────────┴──────────┐       │
-                    │   ▼                   ▼       │
-                    │ ┌──────────┐    ┌──────────┐ │
-                    │ │ Worker   │    │PostgreSQL│ │
-                    │ │ EC2      │    │ EC2      │ │
-                    │ └──────────┘    │Puerto 5432│ │
-                    │                 └──────────┘   │
-                    └─────────────────────────────────┘
+                     ┌─────────────────────────────────┐
+                     │         AWS Cloud               │
+                     │                                 │
+    ┌──────────┐     │   ┌─────────────────────────┐   │
+    │ Producer │─────┼──▶│    HAProxy EC2          │   │
+    │  EC2     │     │   │    Puerto 80 (LB)       │   │
+    └──────────┘     │   └───────────┬─────────────┘   │
+                     │               │                  │
+                     │   ┌──────────┴──────────┐       │
+                     │   ▼                     ▼       │
+                     │ ┌──────────┐    ┌──────────┐   │
+                     │ │ API EC2-1│    │ API EC2-2│   │
+                     │ │Puerto 5000│    │Puerto 5000│   │
+                     │ └──────┬───┘    └──────┬───┘   │
+                     │        │               │       │
+                     │        └───────┬───────┘       │
+                     │                ▼               │
+                     │   ┌────────────────────┐        │
+                     │   │   RabbitMQ EC2     │        │
+                     │   │   Puerto 5672      │        │
+                     │   └─────────┬──────────┘        │
+                     │             │                   │
+                     │   ┌─────────┴──────────┐        │
+                     │   ▼                   ▼        │
+                     │ ┌──────────┐    ┌──────────┐  │
+                     │ │ Worker   │    │PostgreSQL│  │
+                     │ │ EC2      │    │ EC2      │  │
+                     │ └──────────┘    │Puerto 5432│  │
+                     │                 └──────────┘   │
+                     └─────────────────────────────────┘
 ```
 
-### Servicios
+### Servicios y Puertos
 
-| Servicio | Puerto | SSM Parameter |
-|----------|--------|--------------|
-| HAProxy | 80 | `/iot/dev/haproxy/ip` |
-| API Server 1 | 5000 | `/iot/dev/api-1/ip` |
-| API Server 2 | 5000 | `/iot/dev/api-2/ip` |
-| RabbitMQ | 5672, 15672 | `/iot/dev/rabbitmq/ip` |
-| Worker | - | `/iot/dev/worker/ip` |
-| PostgreSQL | 5432 | `/iot/dev/postgres/ip` |
-| Producer | - | `/iot/dev/producer/ip` |
+| Servicio | Puerto | Descripción | SSM Parameter |
+|----------|--------|-------------|---------------|
+| HAProxy | 80 | Load Balancer | `/iot/dev/haproxy/ip` |
+| API Server 1 | 5000 | Flask API (AZ1) | `/iot/dev/api-1/ip` |
+| API Server 2 | 5000 | Flask API (AZ2) | `/iot/dev/api-2/ip` |
+| RabbitMQ | 5672, 15672 | Message Broker | `/iot/dev/rabbitmq/ip` |
+| Worker | - | Consumidor | `/iot/dev/worker/ip` |
+| PostgreSQL | 5432 | Base de datos | `/iot/dev/postgres/ip` |
+| Producer | - | Simulador IoT | `/iot/dev/producer/ip` |
 
 ---
 
-## Modos de Uso
+## Requisitos
 
-### Modo Local (Docker Compose)
-Para desarrollo y pruebas. Todo corre en contenedores Docker.
+### Para desplegar en AWS
 
-### Modo AWS (Terraform)
-Para la actividad en AWS. 7 EC2s independientes con Terraform, Ubuntu 24.04 y Docker.
+- Cuenta de AWS con permisos para crear EC2s, VPC, Security Groups
+- Terraform instalado o usar el contenedor del Learner Lab
+- Docker Hub con imágenes publicadas de API, Worker y Producer
 
----
+### Para ejecutar pruebas
 
-## Desarrollo Local
-
-### Requisitos
-- Docker Desktop
-- Python 3.x (para el simulador)
-
-### Levantando la Arquitectura
-
-```bash
-# Clonar repositorio
-git clone https://github.com/tu-usuario/aws-iot-backend-architecture.git
-cd aws-iot-backend-architecture
-
-# Levantar servicios
-docker compose up -d --build
-
-# Verificar que están corriendo
-docker compose ps
-```
-
-### Verificar Servicios
-
-```bash
-# Health check de API
-curl http://localhost:5000/health
-
-# Enviar datos de prueba
-curl -X POST http://localhost:5000/api/sensor-data \
-  -H "Content-Type: application/json" \
-  -d '{"sensor_id": "TestSensor", "valor": 25.5}'
-```
-
-### Ver RabbitMQ
-
-Abrir en navegador: http://localhost:15672
-- Usuario: `guest`
-- Contraseña: `guest`
-
-### Ver Base de Datos
-
-```bash
-docker compose exec postgres psql -U admin -d iot_project
-```
-
-Consultar datos:
-```sql
-SELECT * FROM sensor_data LIMIT 10;
-\q
-```
-
-### Ejecutar Simulador
-
-```bash
-# Crear venv e instalar
-python3 -m venv venv
-source venv/bin/activate
-pip install requests
-
-# Ejecutar simulador
-python simulator/sensor_mock.py
-
-# Salir del venv
-deactivate
-```
+- SSH key (`iot_key.pem`)
+- `curl`, `python3`, `ssh`
+- Credenciales de AWS configuradas
 
 ---
 
@@ -159,71 +103,72 @@ deactivate
 
 - **Sistema operativo:** Ubuntu Server 24.04 LTS
 - **Infraestructura:** Terraform
-- **Artefactos de aplicación:** imágenes publicadas en Docker Hub
-- **Conexiones internas:** Terraform inyecta IPs privadas en los contenedores
-- **SSM Parameter Store:** Terraform publica IPs para verificacion/debug
+- **Artefactos de aplicación:** imágenes Docker Hub pre-built
+- **Conexiones internas:** Terraform inyecta IPs privadas en los contenedores via `user_data`
+- **SSM Parameter Store:** Terraform publica IPs para verificación/debug
 
-### Imágenes requeridas
+### Imágenes requeridas en Docker Hub
 
-Antes de `terraform apply`, publica estas imágenes:
+El proyecto usa estas imágenes (configuradas en `terraform/variables.tf`):
 
-- `api/` -> imagen de la API Flask
-- `worker/` -> imagen del Worker
-- `simulator/` -> imagen del Producer
+```
+jdavidruanob/aws-iot-api:latest
+jdavidruanob/aws-iot-worker:latest
+jdavidruanob/aws-iot-producer:latest
+```
 
-Ejemplo:
+Si necesitas reconstruirlas:
 
 ```bash
-docker build -t <dockerhub-user>/aws-iot-api:latest ./api
-docker build -t <dockerhub-user>/aws-iot-worker:latest ./worker
-docker build -t <dockerhub-user>/aws-iot-producer:latest ./simulator
+# API
+docker build -t jdavidruanob/aws-iot-api:latest ./api
+docker push jdavidruanob/aws-iot-api:latest
 
-docker push <dockerhub-user>/aws-iot-api:latest
-docker push <dockerhub-user>/aws-iot-worker:latest
-docker push <dockerhub-user>/aws-iot-producer:latest
+# Worker
+docker build -t jdavidruanob/aws-iot-worker:latest ./worker
+docker push jdavidruanob/aws-iot-worker:latest
+
+# Producer
+docker build -t jdavidruanob/aws-iot-producer:latest ./simulator
+docker push jdavidruanob/aws-iot-producer:latest
 ```
 
-El proyecto ya trae por defecto estas imagenes en `terraform/variables.tf`:
-
-```text
-docker.io/jdavidruanob/aws-iot-api:latest
-docker.io/jdavidruanob/aws-iot-worker:latest
-docker.io/jdavidruanob/aws-iot-producer:latest
-```
-
-### Estructura de archivos Terraform
+### Estructura de Terraform
 
 ```
 terraform/
-├── providers.tf
-├── variables.tf
-├── main.tf
-├── security_groups.tf
-└── outputs.tf
+├── providers.tf         # Proveedor AWS
+├── variables.tf         # Variables (VPC, AMI, imágenes)
+├── main.tf             # 7 EC2s + SSM Parameters
+├── security_groups.tf  # Firewalls
+└── outputs.tf          # IPs públicas de salida
 ```
 
 ### Pasos para desplegar
 
 ```bash
+# 1. Ir al directorio de Terraform
 cd terraform
 
-# Inicializar Terraform
+# 2. Inicializar Terraform
 terraform init
 
-# Ver plan de cambios
+# 3. Ver plan de cambios
 terraform plan
 
-# Aplicar cambios
+# 4. Aplicar cambios (escribir "yes")
 terraform apply
 
-# Ver IPs de los servicios
+# 5. Ver IPs de los servicios
 terraform output
 ```
 
-### Endpoints después del despliegue
+### Credenciales de acceso
 
-- **HAProxy URL:** `http://<HAProxy-Public-IP>/api/sensor-data`
-- **RabbitMQ UI:** `http://<RabbitMQ-Public-IP>:15672`
+| Servicio | Usuario | Contraseña |
+|----------|---------|------------|
+| RabbitMQ UI | guest | guest |
+| PostgreSQL | admin | adminpassword |
 
 ---
 
@@ -264,37 +209,86 @@ Health check para HAProxy.
 
 ## Scripts de Instalación
 
-Cada servicio tiene su propio script (`install_*.sh`):
+Cada servicio tiene su propio script (`install_*.sh`) que se ejecuta en el `user_data` de la EC2:
 
 | Script | Descripción |
 |--------|-------------|
 | `install_haproxy.sh` | HAProxy como contenedor Docker |
-| `install_api.sh` | `docker pull` + `docker run` de la API |
+| `install_api.sh` | API Flask (docker pull + run) |
 | `install_rabbitmq.sh` | RabbitMQ en contenedor Docker |
-| `install_worker.sh` | `docker pull` + `docker run` del Worker |
+| `install_worker.sh` | Worker (docker pull + run) |
 | `install_postgres.sh` | PostgreSQL en contenedor Docker |
-| `install_producer.sh` | `docker pull` + `docker run` del Producer |
+| `install_producer.sh` | Producer (docker pull + run) |
 
-### Comportamiento de los scripts
+### Comportamiento
 
-1. Instala dependencias (Docker/nativo)
-2. Configura el servicio
-3. Descarga la imagen si aplica
-4. Inicia el servicio
+1. Instala Docker
+2. Habilita e inicia Docker
+3. Descarga imagen de Docker Hub (si aplica)
+4. Ejecuta el contenedor con variables de entorno inyectadas por Terraform
 
-Los scripts ya no generan código inline dentro de las EC2.
+---
 
 ## Pruebas
 
-La guia completa de validacion y demo esta en [`pruebas.md`](./pruebas.md).
+### Smoke Test Automático
 
-Smoke test automatico post-deploy:
+El script `scripts/run_aws_smoke_tests.sh` valida todo el sistema:
 
 ```bash
-SSH_KEY=~/code/iot/aws-iot-backend-architecture/iot_key.pem ./scripts/run_aws_smoke_tests.sh
+SSH_KEY=./iot_key.pem ./scripts/run_aws_smoke_tests.sh
 ```
 
-Tambien se puede ejecutar pasando las IPs manualmente si Terraform corre dentro de otro contenedor.
+Si Terraform no está disponible localmente, pasa las IPs manualmente:
+
+```bash
+SSH_KEY=./iot_key.pem \
+HAPROXY_PUBLIC_IP=54.237.160.6 \
+HAPROXY_URL=http://54.237.160.6/api/sensor-data \
+RABBITMQ_PUBLIC_IP=13.222.122.42 \
+WORKER_PUBLIC_IP=98.92.190.96 \
+PRODUCER_PUBLIC_IP=44.201.55.237 \
+POSTGRES_PUBLIC_IP=44.198.58.211 \
+./scripts/run_aws_smoke_tests.sh
+```
+
+### Qué valida el smoke test
+
+1. HAProxy responde `/health`
+2. API acepta mensajes POST y devuelve TaskId
+3. RabbitMQ UI accesible en puerto 15672
+4. Worker corriendo e insertando en PostgreSQL
+5. Producer enviando datos
+6. HAProxy configurado con roundrobin y 2 APIs
+7. PostgreSQL con registros en `sensor_data`
+
+### Verificación manual
+
+```bash
+# Health check
+curl http://<haproxy-ip>/health
+
+# Enviar dato manual
+curl -X POST http://<haproxy-ip>/api/sensor-data \
+  -H "Content-Type: application/json" \
+  -d '{"sensor_id":"TestSensor","valor":28.7}'
+
+# Ver RabbitMQ UI
+# http://<rabbitmq-ip>:15672 (guest/guest)
+```
+
+### Ver logs de servicios
+
+```bash
+# Worker
+ssh -i iot_key.pem ubuntu@<worker-ip> "sudo docker logs iot-worker --tail 50"
+
+# Producer
+ssh -i iot_key.pem ubuntu@<producer-ip> "sudo docker logs iot-producer --tail 50"
+
+# HAProxy
+ssh -i iot_key.pem ubuntu@<haproxy-ip> "sudo docker logs iot-haproxy --tail 50"
+```
 
 ---
 
@@ -313,33 +307,19 @@ CREATE TABLE sensor_data (
 );
 ```
 
-### Credenciales
+### Consultar datos
 
-| Servicio | Usuario | Contraseña |
-|----------|---------|------------|
-| RabbitMQ | guest | guest |
-| PostgreSQL | admin | adminpassword |
-
----
-
-## Comandos Útiles
+Desde el Worker (usando docker run con psql):
 
 ```bash
-# Ver servicios
-docker compose ps
+ssh -i iot_key.pem ubuntu@<worker-ip>
 
-# Ver logs
-docker compose logs -f
-docker compose logs iot_api --tail 50
+# Obtener IP de PostgreSQL
+echo $POSTGRES_HOST
 
-# Reiniciar servicios
-docker compose restart
-
-# Detener todo
-docker compose down
-
-# Ruff linting
-ruff check .
+# Consultar datos
+sudo docker run --rm -e PGPASSWORD=adminpassword postgres:15 psql \
+  -h $POSTGRES_HOST -U admin -d iot_project -c "SELECT * FROM sensor_data LIMIT 10;"
 ```
 
 ---
@@ -349,13 +329,27 @@ ruff check .
 ```
 aws-iot-backend-architecture/
 ├── api/                      # API Flask
+│   ├── main.py              # Endpoint /api/sensor-data, /health
+│   ├── Dockerfile
+│   └── requirements.txt
 ├── worker/                   # Worker consumidor
-├── simulator/                # sensor_mock.py
-├── terraform/                # Infructura AWS
-├── install_*.sh              # Scripts para EC2s
-├── get_parameter.py           # Helper SSM
-├── docker-compose.yml        # Pruebas locales
-├── SPEC.md                   # Especificación técnica
-├── AGENTS.md                 # Convenciones para IAs
-└── README.md                 # Este archivo
+│   ├── worker.py            # consume RabbitMQ, inserta en PostgreSQL
+│   ├── Dockerfile
+│   └── requirements.txt
+├── simulator/                # Simulador de sensores
+│   ├── sensor_mock.py       # Genera datos de sensores
+│   ├── Dockerfile
+│   └── requirements.txt
+├── terraform/                 # Infraestructura AWS
+│   ├── main.tf              # 7 EC2s + SSM Parameters
+│   ├── variables.tf
+│   ├── security_groups.tf
+│   └── outputs.tf
+├── scripts/
+│   └── run_aws_smoke_tests.sh  # Smoke test automático
+├── install_*.sh              # Scripts para EC2s (user_data)
+├── get_parameter.py         # Helper SSM (debug)
+├── pruebas.md               # Guía de pruebas
+├── README.md                # Este archivo
+└── SPEC.md                  # Especificación técnica
 ```

@@ -1,17 +1,20 @@
 #!/bin/bash
-set -euxo pipefail
+# install_haproxy.sh
+# Instala Docker y ejecuta HAProxy como balanceador de carga
 
-exec > >(tee /var/log/install-haproxy.log | logger -t install-haproxy -s 2>/dev/console) 2>&1
+# Actualizar paquetes e instalar Docker
+sudo apt-get update -y
+sudo apt-get install -y docker.io
 
-export DEBIAN_FRONTEND=noninteractive
-apt-get update -y
-apt-get install -y docker.io
+# Habilitar y arrancar Docker
+sudo systemctl enable docker
+sudo systemctl start docker
 
-systemctl enable docker
-systemctl start docker
+# Crear directorio para la configuracion de HAProxy
+sudo mkdir -p /opt/haproxy
 
-mkdir -p /opt/haproxy
-
+# Escribir archivo de configuracion de HAProxy
+# Las IPs de las APIs son inyectadas por Terraform via templatefile
 cat > /opt/haproxy/haproxy.cfg <<EOF
 global
     log stdout format raw local0
@@ -34,9 +37,12 @@ backend api_servers
     server api2 ${api_server_2_ip}:5000 check
 EOF
 
-docker rm -f iot-haproxy >/dev/null 2>&1 || true
+# Eliminar contenedor existente si hay
+sudo docker rm -f iot-haproxy >/dev/null 2>&1 || true
 
-docker run -d \
+# Ejecutar contenedor HAProxy
+# Monta el archivo de configuracion dentro del contenedor (read-only)
+sudo docker run -d \
   --name iot-haproxy \
   --restart unless-stopped \
   -p 80:80 \

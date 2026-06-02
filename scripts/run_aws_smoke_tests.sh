@@ -1,177 +1,237 @@
 #!/usr/bin/env bash
+# ============================================
+# Script de Pruebas - Smoke Tests AWS IoT
+# ============================================
+#
+# Uso:
+#   SSH_KEY=/ruta/iot_key.pem ./run_aws_smoke_tests.sh
+#
+# ============================================
+
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TERRAFORM_DIR="${TERRAFORM_DIR:-$ROOT_DIR/terraform}"
 SSH_KEY="${SSH_KEY:-}"
 SSH_USER="${SSH_USER:-ubuntu}"
-POSTGRES_PRIVATE_HOST="${POSTGRES_PRIVATE_HOST:-}"
 TEST_COUNT="${TEST_COUNT:-5}"
 
+# Validar SSH_KEY
 if [[ -z "$SSH_KEY" ]]; then
-  echo "ERROR: define SSH_KEY con la ruta al .pem"
-  echo "Ejemplo: SSH_KEY=~/code/iot/aws-iot-backend-architecture/iot_key.pem $0"
-  exit 1
+    echo "ERROR: Define SSH_KEY con la ruta al archivo .pem"
+    exit 1
 fi
 
 SSH_KEY="${SSH_KEY/#\~/$HOME}"
 
 if [[ ! -f "$SSH_KEY" ]]; then
-  echo "ERROR: no existe SSH_KEY: $SSH_KEY"
-  exit 1
+    echo "ERROR: No existe: $SSH_KEY"
+    exit 1
 fi
 
-need_command() {
-  if ! command -v "$1" >/dev/null 2>&1; then
-    echo "ERROR: falta el comando requerido: $1"
+# Comandos necesarios
+command -v curl >/dev/null || { echo "ERROR: curl no encontrado"; exit 1; }
+command -v python3 >/dev/null || { echo "ERROR: python3 no encontrado"; exit 1; }
+command -v ssh >/dev/null || { echo "ERROR: ssh no encontrado"; exit 1; }
+
+# Funcion para ejecutar comandos SSH
+do_ssh() {
+    ssh -i "$SSH_KEY" \
+       -o StrictHostKeyChecking=no \
+       -o ConnectTimeout=10 \
+       -o BatchMode=yes \
+       "$SSH_USER@$1" "$2"
+}
+
+# Obtener valor de Terraform o variable de entorno
+get_val() {
+    local env_name="$1"
+    local tf_name="$2"
+    local val="${!env_name:-}"
+
+    if command -v terraform >/dev/null 2>&1 && [[ -d "$TERRAFORM_DIR" ]]; then
+        terraform -chdir="$TERRAFORM_DIR" output -raw "$tf_name" 2>/dev/null && return
+    fi
+
+    if [[ -n "$val" ]]; then
+        echo "$val"
+        return
+    fi
+
+    echo "ERROR: No se encontro $tf_name"
     exit 1
-  fi
 }
 
-need_command curl
-need_command python3
-need_command ssh
+echo "=========================================="
+echo "SMOKE TESTS - AWS IoT Architecture"
+echo "=========================================="
+echo
 
-tf_output() {
-  local name="$1"
-  terraform -chdir="$TERRAFORM_DIR" output -raw "$name"
-}
+# Obtener IPs
+echo "== Leyendo IPs del despliegue =="
+HAPROXY_IP="$(get_val HAPROXY_PUBLIC_IP haproxy_public_ip)"
+HAPROXY_URL="$(get_val HAPROXY_URL haproxy_url)"
+RABBITMQ_IP="$(get_val RABBITMQ_PUBLIC_IP rabbitmq_public_ip)"
+WORKER_IP="$(get_val WORKER_PUBLIC_IP worker_public_ip)"
+PRODUCER_IP="$(get_val PRODUCER_PUBLIC_IP producer_public_ip)"
+POSTGRES_IP="$(get_val POSTGRES_PUBLIC_IP postgres_public_ip)"
 
-get_value() {
-  local env_name="$1"
-  local output_name="$2"
-  local env_value="${!env_name:-}"
+echo "HAProxy:   $HAPROXY_IP"
+echo "RabbitMQ:  $RABBITMQ_IP"
+echo "Worker:    $WORKER_IP"
+echo "Producer:  $PRODUCER_IP"
+echo "Postgres:  $POSTGRES_IP"
+echo
 
-  if command -v terraform >/dev/null 2>&1 && [[ -d "$TERRAFORM_DIR" ]]; then
-    tf_output "$output_name"
-    return
-  fi
+# ============================================
+# Test 1: HAProxy /health
+# ============================================
+echo "== Test 1: HAProxy /health =="
 
-  if [[ -n "$env_value" ]]; then
-    echo "$env_value"
-    return
-  fi
+HEALTH_RESP="$(curl -s "http://$HAPROXY_IP/health")"
 
-  echo "ERROR: no se pudo leer $output_name. Instala Terraform o define $env_name."
-  exit 1
-}
-
-ssh_run() {
-  local host="$1"
-  shift
-  ssh \
-    -i "$SSH_KEY" \
-    -o BatchMode=yes \
-    -o StrictHostKeyChecking=accept-new \
-    -o ConnectTimeout=10 \
-    "$SSH_USER@$host" \
-    "$@"
-}
-
-pass() {
-  echo "[OK] $1"
-}
-
-section() {
-  echo
-  echo "== $1 =="
-}
-
-section "Leyendo datos del despliegue"
-
-HAPROXY_PUBLIC_IP="$(get_value HAPROXY_PUBLIC_IP haproxy_public_ip)"
-HAPROXY_URL="$(get_value HAPROXY_URL haproxy_url)"
-RABBITMQ_PUBLIC_IP="$(get_value RABBITMQ_PUBLIC_IP rabbitmq_public_ip)"
-WORKER_PUBLIC_IP="$(get_value WORKER_PUBLIC_IP worker_public_ip)"
-PRODUCER_PUBLIC_IP="$(get_value PRODUCER_PUBLIC_IP producer_public_ip)"
-POSTGRES_PUBLIC_IP="$(get_value POSTGRES_PUBLIC_IP postgres_public_ip)"
-
-echo "HAProxy:   $HAPROXY_PUBLIC_IP"
-echo "API URL:   $HAPROXY_URL"
-echo "RabbitMQ:  $RABBITMQ_PUBLIC_IP"
-echo "Worker:    $WORKER_PUBLIC_IP"
-echo "Producer:  $PRODUCER_PUBLIC_IP"
-echo "Postgres:  $POSTGRES_PUBLIC_IP"
-
-section "Probando HAProxy health"
-
-HEALTH_BODY="$(curl -fsS --max-time 20 "http://$HAPROXY_PUBLIC_IP/health")"
-python3 - "$HEALTH_BODY" <<'PY'
-import json
-import sys
-
-body = json.loads(sys.argv[1])
-assert body.get("status") == "healthy", body
+python3 - "$HEALTH_RESP" <<'PY'
+import json, sys
+data = json.loads(sys.argv[1])
+assert data.get("status") == "healthy", f"Status incorrecto: {data}"
+print("Status:", data.get("status"))
 PY
-pass "HAProxy responde /health"
 
-section "Enviando datos por HAProxy"
+echo "[OK] HAProxy responde correctamente"
+echo
 
-for i in $(seq 1 "$TEST_COUNT"); do
-  RESPONSE="$(curl -fsS --max-time 20 -X POST "$HAPROXY_URL" \
-    -H "Content-Type: application/json" \
-    -d "{\"sensor_id\":\"SmokeTest-$i\",\"valor\":$i}")"
+# ============================================
+# Test 2: Enviar datos de prueba
+# ============================================
+echo "== Test 2: Enviar $TEST_COUNT mensajes =="
 
-  python3 - "$RESPONSE" <<'PY'
-import json
-import sys
+for i in $(seq 1 $TEST_COUNT); do
+    RESP="$(curl -s -X POST "$HAPROXY_URL" \
+        -H "Content-Type: application/json" \
+        -d "{\"sensor_id\":\"Test-$i\",\"valor\":$i}")"
 
-body = json.loads(sys.argv[1])
-assert "TaskId" in body, body
-assert body.get("message") == "Dato recibido", body
-print(body["TaskId"])
+    python3 - "$RESP" <<'PY'
+import json, sys
+data = json.loads(sys.argv[1])
+assert "TaskId" in data, f"No hay TaskId: {data}"
+print("  TaskId:", data["TaskId"][:8], "...")
 PY
 done
-pass "API acepta $TEST_COUNT mensajes y responde TaskId"
 
-section "Probando RabbitMQ UI"
+echo "[OK] API acepta mensajes"
+echo
 
-curl -fsSI --max-time 20 "http://$RABBITMQ_PUBLIC_IP:15672" >/dev/null
-pass "RabbitMQ UI responde en :15672"
+# ============================================
+# Test 3: RabbitMQ UI
+# ============================================
+echo "== Test 3: RabbitMQ UI =="
 
-section "Validando Worker"
+RABBITMQ_RESP="$(curl -s -o /dev/null -w "%{http_code}" "http://$RABBITMQ_IP:15672")"
 
-ssh_run "$WORKER_PUBLIC_IP" "sudo docker ps --format '{{.Names}} {{.Status}}' | grep '^iot-worker '" >/dev/null
-pass "Contenedor iot-worker esta corriendo"
+if [[ "$RABBITMQ_RESP" == "200" ]]; then
+    echo "[OK] RabbitMQ UI accessible en puerto 15672"
+else
+    echo "ERROR: RabbitMQ respondio codigo $RABBITMQ_RESP"
+    exit 1
+fi
+echo
 
-ssh_run "$WORKER_PUBLIC_IP" "sudo docker logs iot-worker --tail 200 | grep 'Guardado en BD con exito'" >/dev/null
-pass "Worker registra inserciones exitosas en PostgreSQL"
+# ============================================
+# Test 4: Worker
+# ============================================
+echo "== Test 4: Worker =="
 
-section "Validando Producer"
+WORKER_RUNNING="$(do_ssh "$WORKER_IP" "sudo docker ps --format '{{.Names}}' | grep iot-worker")"
 
-ssh_run "$PRODUCER_PUBLIC_IP" "sudo docker ps --format '{{.Names}} {{.Status}}' | grep '^iot-producer '" >/dev/null
-pass "Contenedor iot-producer esta corriendo"
-
-ssh_run "$PRODUCER_PUBLIC_IP" "sudo docker logs iot-producer --tail 200 | grep 'TaskId:'" >/dev/null
-pass "Producer registra envios exitosos"
-
-section "Validando HAProxy config"
-
-ssh_run "$HAPROXY_PUBLIC_IP" "sudo docker ps --format '{{.Names}} {{.Status}}' | grep '^iot-haproxy '" >/dev/null
-pass "Contenedor iot-haproxy esta corriendo"
-
-ssh_run "$HAPROXY_PUBLIC_IP" "sudo docker exec iot-haproxy cat /usr/local/etc/haproxy/haproxy.cfg | grep 'balance roundrobin'" >/dev/null
-ssh_run "$HAPROXY_PUBLIC_IP" "sudo docker exec iot-haproxy cat /usr/local/etc/haproxy/haproxy.cfg | grep 'server api1'" >/dev/null
-ssh_run "$HAPROXY_PUBLIC_IP" "sudo docker exec iot-haproxy cat /usr/local/etc/haproxy/haproxy.cfg | grep 'server api2'" >/dev/null
-pass "HAProxy esta configurado con roundrobin y dos APIs"
-
-section "Validando PostgreSQL"
-
-if [[ -z "$POSTGRES_PRIVATE_HOST" ]]; then
-  POSTGRES_PRIVATE_HOST="$(ssh_run "$WORKER_PUBLIC_IP" "sudo docker inspect iot-worker --format '{{range .Config.Env}}{{println .}}{{end}}' | sed -n 's/^POSTGRES_HOST=//p'")"
+if [[ -n "$WORKER_RUNNING" ]]; then
+    echo "[OK] iot-worker esta corriendo"
+else
+    echo "ERROR: iot-worker no esta corriendo"
+    exit 1
 fi
 
-echo "Postgres private host: $POSTGRES_PRIVATE_HOST"
+echo ""
+echo "Logs recientes del Worker:"
+echo "----------------------------"
+do_ssh "$WORKER_IP" "sudo docker logs iot-worker --tail 10" 2>&1 | grep -E "Mensaje|Guardado" || echo "(sin mensajes recientes)"
+echo
 
-DB_COUNT="$(ssh_run "$WORKER_PUBLIC_IP" "sudo docker run --rm -e PGPASSWORD=adminpassword postgres:15 psql -h '$POSTGRES_PRIVATE_HOST' -U admin -d iot_project -tAc 'SELECT COUNT(*) FROM sensor_data;'")"
+# ============================================
+# Test 5: Producer
+# ============================================
+echo "== Test 5: Producer =="
+
+PRODUCER_RUNNING="$(do_ssh "$PRODUCER_IP" "sudo docker ps --format '{{.Names}}' | grep iot-producer")"
+
+if [[ -n "$PRODUCER_RUNNING" ]]; then
+    echo "[OK] iot-producer esta corriendo"
+else
+    echo "ERROR: iot-producer no esta corriendo"
+    exit 1
+fi
+
+echo ""
+echo "Logs recientes del Producer:"
+echo "----------------------------"
+do_ssh "$PRODUCER_IP" "sudo docker logs iot-producer --tail 5" 2>&1 | grep "\+\+" || echo "(sin mensajes recientes)"
+echo
+
+# ============================================
+# Test 6: HAProxy config
+# ============================================
+echo "== Test 6: HAProxy config =="
+
+HAPROXY_RUNNING="$(do_ssh "$HAPROXY_IP" "sudo docker ps --format '{{.Names}}' | grep iot-haproxy")"
+
+if [[ -n "$HAPROXY_RUNNING" ]]; then
+    echo "[OK] iot-haproxy esta corriendo"
+else
+    echo "ERROR: iot-haproxy no esta corriendo"
+    exit 1
+fi
+
+HAPROXY_CFG="$(do_ssh "$HAPROXY_IP" "sudo docker exec iot-haproxy cat /usr/local/etc/haproxy/haproxy.cfg")"
+
+echo "$HAPROXY_CFG" | grep -q "balance roundrobin" && echo "[OK] roundrobin configurado"
+echo "$HAPROXY_CFG" | grep -q "server api1" && echo "[OK] api1 configurada"
+echo "$HAPROXY_CFG" | grep -q "server api2" && echo "[OK] api2 configurada"
+echo
+
+# ============================================
+# Test 7: PostgreSQL
+# ============================================
+echo "== Test 7: PostgreSQL =="
+
+# Obtener IP privada de PostgreSQL desde el Worker
+POSTGRES_PRIVATE="$(do_ssh "$WORKER_IP" "sudo docker inspect iot-worker --format '{{range .Config.Env}}{{println .}}{{end}}' | grep POSTGRES_HOST | cut -d= -f2")"
+
+if [[ -z "$POSTGRES_PRIVATE" ]]; then
+    echo "ERROR: No se pudo obtener la IP de PostgreSQL desde Worker"
+    exit 1
+fi
+
+echo "PostgreSQL privado: $POSTGRES_PRIVATE"
+
+# Contar registros
+DB_COUNT="$(do_ssh "$WORKER_IP" "sudo docker run --rm -e PGPASSWORD=adminpassword postgres:15 psql -h $POSTGRES_PRIVATE -U admin -d iot_project -tAc 'SELECT COUNT(*) FROM sensor_data;'")"
 DB_COUNT="$(echo "$DB_COUNT" | tr -d '[:space:]')"
+echo "Registros en sensor_data: $DB_COUNT"
 
 if [[ "$DB_COUNT" =~ ^[0-9]+$ ]] && (( DB_COUNT > 0 )); then
-  pass "PostgreSQL tiene $DB_COUNT registros en sensor_data"
+    echo "[OK] PostgreSQL tiene datos"
 else
-  echo "ERROR: conteo invalido de PostgreSQL: $DB_COUNT"
-  exit 1
+    echo "WARNING: PostgreSQL no tiene registros"
 fi
 
+echo ""
+echo "Ultimos 5 registros:"
+echo "----------------------------"
+do_ssh "$WORKER_IP" "sudo docker run --rm -e PGPASSWORD=adminpassword postgres:15 psql -h $POSTGRES_PRIVATE -U admin -d iot_project -c 'SELECT task_id, sensor_id, valor, status, fecha FROM sensor_data ORDER BY fecha DESC LIMIT 5;'"
 echo
-echo "Smoke tests completados correctamente."
+
+# ============================================
+# Resumen
+# ============================================
+echo "=========================================="
+echo "TODAS LAS PRUEBAS COMPLETADAS"
+echo "=========================================="

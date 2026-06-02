@@ -1,19 +1,25 @@
 #!/bin/bash
-set -euxo pipefail
+# install_postgres.sh
+# Instala Docker y ejecuta PostgreSQL como contenedor
 
-exec > >(tee /var/log/install-postgres.log | logger -t install-postgres -s 2>/dev/console) 2>&1
+# Actualizar paquetes e instalar Docker
+sudo apt-get update -y
+sudo apt-get install -y docker.io
 
-export DEBIAN_FRONTEND=noninteractive
-apt-get update -y
-apt-get install -y docker.io
+# Habilitar y arrancar Docker
+sudo systemctl enable docker
+sudo systemctl start docker
 
-systemctl enable docker
-systemctl start docker
+# Eliminar contenedor existente si hay
+sudo docker rm -f iot-postgres >/dev/null 2>&1 || true
 
-docker rm -f iot-postgres >/dev/null 2>&1 || true
-docker volume create iot-postgres-data >/dev/null
+# Crear volumen Docker para persistencia de datos
+sudo docker volume create iot-postgres-data >/dev/null
 
-docker run -d \
+# Ejecutar contenedor PostgreSQL
+# Puerto 5432: PostgreSQL
+# Variables de entorno para crear DB, usuario y contrasena
+sudo docker run -d \
   --name iot-postgres \
   --restart unless-stopped \
   -p 5432:5432 \

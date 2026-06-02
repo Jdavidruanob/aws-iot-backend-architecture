@@ -1,19 +1,25 @@
 #!/bin/bash
-set -euxo pipefail
+# install_api.sh
+# Instala Docker y ejecuta la API Flask como contenedor
 
-exec > >(tee /var/log/install-api.log | logger -t install-api -s 2>/dev/console) 2>&1
+# Actualizar paquetes e instalar Docker
+sudo apt-get update -y
+sudo apt-get install -y docker.io
 
-export DEBIAN_FRONTEND=noninteractive
-apt-get update -y
-apt-get install -y docker.io
+# Habilitar y arrancar Docker
+sudo systemctl enable docker
+sudo systemctl start docker
 
-systemctl enable docker
-systemctl start docker
+# Eliminar contenedor existente si hay
+sudo docker rm -f iot-api >/dev/null 2>&1 || true
 
-docker rm -f iot-api >/dev/null 2>&1 || true
-docker pull "${api_image}"
+# Descargar imagen de la API desde Docker Hub
+sudo docker pull "${api_image}"
 
-docker run -d \
+# Ejecutar contenedor de la API
+# Puerto 5000: Flask API
+# RABBITMQ_HOST: IP privada de RabbitMQ (inyectada por Terraform)
+sudo docker run -d \
   --name iot-api \
   --restart unless-stopped \
   -p 5000:5000 \

@@ -2,6 +2,7 @@ import json
 import logging
 import os
 import uuid
+import time
 
 import pika
 from flask import Flask, jsonify, request
@@ -10,25 +11,15 @@ app = Flask(__name__)
 logging.basicConfig(level=logging.INFO)
 LOGGER = logging.getLogger(__name__)
 
-# Cache de IP de RabbitMQ para evitar consultas repetidas a SSM
-# En producción (AWS), cada consulta a SSM tiene latencia y costo
+# Cache de IP de RabbitMQ para evitar consultas repetidas
 RABBITMQ_IP = None
 
 
-def get_rabbitmq_ip():
-    """
-    Obtiene el host de RabbitMQ desde variables de entorno.
-
-    Estrategia:
-    1. Si RABBITMQ_HOST existe, usa ese valor.
-    2. Si USE_LOCAL_ENV=true, usa el hostname local de Docker Compose.
-    """
+def get_rabbitmq_ip(): # Obtener ip inyectada por terrafom
     rabbitmq_host = os.environ.get('RABBITMQ_HOST')
     if rabbitmq_host:
         return rabbitmq_host
-    if os.environ.get('USE_LOCAL_ENV', 'false').lower() == 'true':
-        return 'rabbitmq'
-    raise RuntimeError("RABBITMQ_HOST is required outside local mode")
+    raise RuntimeError("RABBITMQ_HOST is required")
 
 
 def get_rabbitmq_connection():
@@ -41,23 +32,24 @@ def get_rabbitmq_connection():
     global RABBITMQ_IP
     credentials = pika.PlainCredentials('guest', 'guest')
 
-    while True:
+    while True: # se intenta conectar hasta que funcione o falle
         try:
             if RABBITMQ_IP is None:
                 RABBITMQ_IP = get_rabbitmq_ip()
-            parameters = pika.ConnectionParameters(RABBITMQ_IP, credentials=credentials)
+            # Crea objeto con los datos de conexión: IP + credenciales.
+            parameters = pika.ConnectionParameters(RABBITMQ_IP, credentials=credentials) 
+            # Abre conexión real a RabbitMQ.
             return pika.BlockingConnection(parameters)
         except Exception as exc:
             LOGGER.warning("RabbitMQ is not ready yet: %s", exc)
             RABBITMQ_IP = None
-            import time
-            time.sleep(3)
+            time.sleep(3) # 3 segundos antes de reintentar
 
 
 def init_rabbitmq():
     """Inicializa la cola durable al arrancar la API."""
     connection = get_rabbitmq_connection()
-    channel = connection.channel()
+    channel = connection.channel() # canal para crear la cola
     channel.queue_declare(queue='iot_tasks_queue', durable=True)
     connection.close()
 
@@ -76,8 +68,8 @@ def receive_data():
     El cliente puede usar el TaskId para consultar estado.
     """
     try:
-        sensor_data = request.get_json()
-        task_id = str(uuid.uuid4())
+        sensor_data = request.get_json() # extraer info del request
+        task_id = str(uuid.uuid4()) # generar un id unico
 
         payload = {
             "task_id": task_id,
@@ -87,8 +79,8 @@ def receive_data():
 
         connection = get_rabbitmq_connection()
         channel = connection.channel()
-        channel.queue_declare(queue='iot_tasks_queue', durable=True)
-        channel.basic_publish(
+
+        channel.basic_publish( # enviar mensaje a la cola
             exchange='',
             routing_key='iot_tasks_queue',
             body=json.dumps(payload),

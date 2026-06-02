@@ -13,18 +13,14 @@ def get_rabbitmq_ip():
     rabbitmq_host = os.environ.get('RABBITMQ_HOST')
     if rabbitmq_host:
         return rabbitmq_host
-    if os.environ.get('USE_LOCAL_ENV', 'false').lower() == 'true':
-        return 'rabbitmq'
-    raise RuntimeError("RABBITMQ_HOST is required outside local mode")
+    raise RuntimeError("RABBITMQ_HOST is required")
 
 
 def get_postgres_ip():
     postgres_host = os.environ.get('POSTGRES_HOST')
     if postgres_host:
         return postgres_host
-    if os.environ.get('USE_LOCAL_ENV', 'false').lower() == 'true':
-        return 'postgres'
-    raise RuntimeError("POSTGRES_HOST is required outside local mode")
+    raise RuntimeError("POSTGRES_HOST is required")
 
 
 RABBITMQ_IP = None
@@ -82,15 +78,15 @@ def init_db():
 def callback(ch, method, properties, body):
     # Procesa cada mensaje de la cola
     # Si falla el INSERT, el mensaje queda en la cola para reintento
-    mensaje = json.loads(body.decode())
+    mensaje = json.loads(body.decode()) # decodificar y formatear el mensaje
     LOGGER.info("Mensaje recibido: %s", mensaje['task_id'])
 
     task_id = mensaje['task_id']
     sensor_id = mensaje['data']['sensor_id']
     valor = mensaje['data']['valor']
-    status = "completed"
+    status = "completed" # marcar como completado 
 
-    try:
+    try: # insertar en postgress
         conn = get_db_connection()
         cur = conn.cursor()
         cur.execute(
@@ -102,7 +98,8 @@ def callback(ch, method, properties, body):
         conn.close()
 
         LOGGER.info("Guardado en BD con exito. Task: %s", task_id)
-        ch.basic_ack(delivery_tag=method.delivery_tag)
+        # confirmar mensaje para que rabbit lo saque de la cola.
+        ch.basic_ack(delivery_tag=method.delivery_tag) 
 
     except Exception as e:
         LOGGER.exception("Error al guardar en BD: %s", e)

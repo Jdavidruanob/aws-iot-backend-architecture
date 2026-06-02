@@ -1,19 +1,25 @@
 #!/bin/bash
-set -euxo pipefail
+# install_worker.sh
+# Instala Docker y ejecuta el Worker como contenedor
 
-exec > >(tee /var/log/install-worker.log | logger -t install-worker -s 2>/dev/console) 2>&1
+# Actualizar paquetes e instalar Docker
+sudo apt-get update -y
+sudo apt-get install -y docker.io
 
-export DEBIAN_FRONTEND=noninteractive
-apt-get update -y
-apt-get install -y docker.io
+# Habilitar y arrancar Docker
+sudo systemctl enable docker
+sudo systemctl start docker
 
-systemctl enable docker
-systemctl start docker
+# Eliminar contenedor existente si hay
+sudo docker rm -f iot-worker >/dev/null 2>&1 || true
 
-docker rm -f iot-worker >/dev/null 2>&1 || true
-docker pull "${worker_image}"
+# Descargar imagen del Worker desde Docker Hub
+sudo docker pull "${worker_image}"
 
-docker run -d \
+# Ejecutar contenedor del Worker
+# RABBITMQ_HOST: IP privada de RabbitMQ (inyectada por Terraform)
+# POSTGRES_HOST: IP privada de PostgreSQL (inyectada por Terraform)
+sudo docker run -d \
   --name iot-worker \
   --restart unless-stopped \
   -e RABBITMQ_HOST="${rabbitmq_host}" \

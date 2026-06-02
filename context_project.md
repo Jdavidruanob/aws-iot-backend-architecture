@@ -1,46 +1,42 @@
-# Project Context: IoT Backend Architecture
+# Context: AWS IoT Backend Architecture
 
-## 1. Idea Central del Proyecto
+## Información del Proyecto
 
-El objetivo es construir un sistema de backend para la ingestión masiva y asíncrona de datos provenientes de sensores IoT. El sistema está diseñado bajo un enfoque de **microservicios desacoplados** para garantizar que la recepción de datos nunca se bloquee por procesos lentos de escritura en base de datos o procesamiento pesado.
+**Actividad académica del curso de IoT (Internet of Things)**
+
+Este proyecto implementa un sistema de backend para la ingestión masiva y asíncrona de datos provenientes de sensores IoT. El sistema está diseñado bajo un enfoque de **microservicios desacoplados** para garantizar que la recepción de datos nunca se bloquee por procesos lentos de escritura en base de datos.
 
 ---
 
-## 2. Diagrama de Arquitectura (Estructural)
+## Arquitectura
 
 ```
-┌─── Client Side ──────────────────┐
-│                                  │
-│  [ Productor Eventos Sintéticos ] │
-│  [ Actor / Usuario              ] │
-└──────────────┬───────────────────┘
-               │
-               ▼
-┌─── AWS Infrastructure ───────────────────────────────────────────┐
-│                                                                   │
-│  [ HAProxy - Load Balancer EC2 :80 ]                             │
-│           │                                                       │
-│           ▼                                                       │
-│  ┌─── API Servers ────────────────────────────────────────────┐   │
-│  │  [ API REST - Flask :5000 ]  ──(3) Encola──►  [ RabbitMQ ]│  │
-│  │          │  ▲                                      │      │   │
-│  │  (2)     │  │ 202 TaskId                    Consume│      │   │
-│  │ Consulta │  │                                      ▼      │   │
-│  │          ▼  │                               [ Worker ]    │   │
-│  │  [ PostgreSQL DB ]  ◄──── Update TaskId / Create Order ───┘   │
-│  │                                                           │   │
-│  └───────────────────────────────────────────────────────────┘   │
-└───────────────────────────────────────────────────────────────────┘
-
-Flujo de Ingesta:  Productor ──POST(1)──► HAProxy ──► API ──► RabbitMQ ──► Worker ──► DB
-Flujo de Consulta: Actor ──GET Task/TaskId──► API ──(2)──► DB
+┌─── Client Side ─────────────────────────────────────────┐
+│                                                          │
+│  [ Producer (sensor_mock.py) ]                          │
+│  Simula sensores IoT enviando datos continuamente        │
+└────────────────────┬────────────────────────────────────┘
+                     │
+                     ▼
+┌─── AWS Infrastructure ──────────────────────────────────┐
+│                                                          │
+│  [ HAProxy - Load Balancer EC2 :80 ]                    │
+│           │                                              │
+│           ▼                                              │
+│  ┌─── API Servers ──────────────────────────────────┐  │
+│  │  [ API REST - Flask :5000 ]  ──►  [ RabbitMQ ]    │  │
+│  │          │  ▲                                   │  │
+│  │  (202)   │  │  TaskId                    Consume│  │
+│  │          ▼  │                                   ▼  │
+│  │  [ PostgreSQL DB ]  ◄──── INSERT ──────────────[Worker]
+│  │                                                     │  │
+│  └───────────────────────────────────────────────────┘  │
+└─────────────────────────────────────────────────────────┘
 ```
 
 ---
 
-## 3. Estado Actual: Fase 2 (Distribuida en 7 EC2s)
-
-El sistema ha sido migrado de un monolito Docker Compose a una arquitectura distribuida con **7 EC2s independientes**.
+## Estado Actual: Desplegado en 7 EC2s
 
 ### Infraestructura AWS
 
@@ -56,87 +52,19 @@ El sistema ha sido migrado de un monolito Docker Compose a una arquitectura dist
 
 ### Arquitectura de Red
 
-- HAProxy recibe tráfico y balancea entre las 2 API Servers
-- Las API Servers solo aceptan tráfico desde el HAProxy (security group)
+- HAProxy recibe tráfico y balancea entre las 2 API Servers (roundrobin)
+- Las API Servers solo aceptan tráfico desde HAProxy (security group)
 - Worker consume de RabbitMQ y escribe en PostgreSQL
-- Terraform inyecta IPs privadas en los contenedores para comunicacion runtime
-- Terraform publica IPs en SSM Parameter Store para referencia y verificacion
-- Productor recibe la URL publica de HAProxy desde Terraform
+- Terraform inyecta IPs privadas en los contenedores para comunicación runtime
+- Terraform publica IPs en SSM Parameter Store para referencia y verificación
 
 ---
 
-## 4. Versión Local (Docker Compose)
-
-Para desarrollo y pruebas, el sistema funciona con Docker Compose en una sola máquina.
-
-```bash
-docker compose up -d --build
-```
-
-Servicios: API, Worker, RabbitMQ, PostgreSQL
-
----
-
-## 5. Cambios Realizados
-
-### Configuracion runtime
-
-- `api/main.py` - Usa `RABBITMQ_HOST`
-- `worker/worker.py` - Usa `RABBITMQ_HOST` y `POSTGRES_HOST`
-- `get_parameter.py` - Helper opcional para leer parametros SSM en verificaciones
-
-### Scripts de Instalación
-
-- `install_haproxy.sh` - HAProxy con IPs de APIs inyectadas via Terraform
-- `install_api.sh` - API Flask desde Docker Hub
-- `install_rabbitmq.sh` - RabbitMQ en Docker
-- `install_worker.sh` - Worker desde Docker Hub
-- `install_postgres.sh` - PostgreSQL en Docker
-- `install_producer.sh` - Producer desde Docker Hub
-
-### Terraform
-
-- 7 EC2s con sus Security Groups
-- Ubuntu Server 24.04 LTS
-- SSM Parameter Store para referencia/debug
-- HAProxy usa `templatefile` para recibir IPs de APIs
-
----
-
-## 6. Detalles Técnicos
-
-- **Protocolo de Mensajería:** AMQP vía RabbitMQ (Puerto `5672`)
-- **Persistencia:** PostgreSQL (Puerto `5432`)
-- **API:** Flask en puerto `5000`
-- **Balanceador:** HAProxy en puerto `80`
-- **Respuesta Asíncrona:** HTTP `202 Accepted` + `TaskId (UUID)`
-
----
-
-## 7. Archivos del Proyecto
+## Flujo de Datos Completo
 
 ```
-aws-iot-backend-architecture/
-├── api/                     # API Flask
-├── worker/                  # Worker consumidor
-├── simulator/               # sensor_mock.py
-├── terraform/               # IaC para AWS
-├── install_*.sh             # Scripts para EC2s
-├── get_parameter.py         # Helper SSM
-├── docker-compose.yml       # Pruebas locales
-├── SPEC.md                  # Especificación técnica
-├── AGENTS.md                # Convenciones para IAs
-├── README.md                # Documentación
-└── context_project.md       # Este archivo
-```
-
----
-
-## 8. Flujo de Datos Completo
-
-```
-1. Productor EC2 ejecuta sensor_mock.py en Docker
-   └── Recibe la URL de HAProxy desde Terraform
+1. Producer EC2 ejecuta sensor_mock.py en Docker
+   └── Recibe la URL de HAProxy desde Terraform (user_data)
 
 2. sensor_mock.py ──POST /api/sensor-data──► HAProxy EC2 :80
 
@@ -158,14 +86,39 @@ aws-iot-backend-architecture/
 
 ---
 
-## 9. Convenciones y Reglas
+## Detalles Técnicos
 
-Ver `AGENTS.md` para:
-- Estilo de código (Ruff)
-- Reglas de linting
-- Variables de entorno
-- Workflow de desarrollo
+- **Sistema operativo:** Ubuntu Server 24.04 LTS
+- **Infraestructura como Código:** Terraform
+- **Protocolo de Mensajería:** AMQP vía RabbitMQ (Puerto `5672`)
+- **Persistencia:** PostgreSQL (Puerto `5432`)
+- **API:** Flask en puerto `5000`
+- **Balanceador:** HAProxy en puerto `80`
+- **Respuesta Asíncrona:** HTTP `202 Accepted` + `TaskId (UUID)`
 
 ---
 
-Última actualización: 2026-05-04
+## Credenciales
+
+| Servicio | Usuario | Contraseña |
+|----------|---------|------------|
+| RabbitMQ | guest | guest |
+| PostgreSQL | admin | adminpassword |
+
+---
+
+## Archivos del Proyecto
+
+```
+aws-iot-backend-architecture/
+├── api/                     # API Flask
+├── worker/                  # Worker consumidor
+├── simulator/               # sensor_mock.py
+├── terraform/               # Infraestructura AWS (7 EC2s)
+├── scripts/                 # Smoke tests
+├── install_*.sh             # Scripts para EC2s
+├── get_parameter.py         # Helper SSM
+├── pruebas.md               # Guía de pruebas
+├── README.md                # Documentación
+└── SPEC.md                  # Especificación técnica
+```
